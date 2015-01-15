@@ -30,8 +30,8 @@
     JcaPGPDigestCalculatorProviderBuilder
     JcaPGPKeyPair
     JcePBESecretKeyEncryptorBuilder]
-   [java.util Date]
-   [java.io InputStream OutputStream ByteArrayOutputStream]
+   [java.util Date UUID]
+   [java.io InputStream OutputStream ByteArrayOutputStream FilterOutputStream]
    [java.security
     KeyPair
     KeyPairGenerator
@@ -122,47 +122,54 @@
            (BcPBESecretKeyDecryptorBuilder.)
            (.build pass))))
 
-(defn file->zipped-bytes
-  [src]
-  (with-open [bytes (ByteArrayOutputStream.)
-              com (PGPCompressedDataGenerator. PGPCompressedData/ZIP)]
-    (PGPUtil/writeFileToLiteralData (.open com bytes) PGPLiteralData/BINARY (io/file src))
-    (.close com)
-    (.toByteArray bytes)))
 
-(defn stream->zipped-bytes
-  [in name buf-size]
-  (let [buf (byte-array buf-size)]
-    (with-open [in    (io/input-stream in)
-                ld    (PGPLiteralDataGenerator.)
-                bytes (ByteArrayOutputStream. buf-size)]
-      (with-open [com (PGPCompressedDataGenerator. PGPCompressedData/ZIP)
-                  out (.open ld (.open com bytes)
-                             PGPLiteralData/BINARY name (Date.) (byte-array buf-size))]
-        (io/copy in out :buffer-size buf-size))
-      (.toByteArray bytes))))
+(defn closing-stream
+  [streams]
+  (proxy [FilterOutputStream] [(first streams)]
+    (close []
+      (dorun (map #(.close ^OutputStream %) streams)))))
 
-(defn encrypt-bytes
-  [bytes dest ^PGPPublicKey pub-key]
-  (let [enc   (doto (BcPGPDataEncryptorBuilder. PGPEncryptedData/AES_256)
-                (.setWithIntegrityPacket true)
-                (.setSecureRandom (SecureRandom.)))
-        gen   (doto (PGPEncryptedDataGenerator. enc)
-                (.addMethod (BcPublicKeyKeyEncryptionMethodGenerator. pub-key)))]
-    (with-open [out (.open gen (io/output-stream dest) (long (alength bytes)))]
-      (.write out bytes))))
+(defn zipped-stream
+  [out buf-size]
+  (let [name (str (UUID/randomUUID))
+        ld (PGPLiteralDataGenerator.)
+        com (PGPCompressedDataGenerator. PGPCompressedData/ZIP)
+        zipped-out (.open com out)
+        tagged-out (.open ld
+                          zipped-out
+                          PGPLiteralData/BINARY
+                          name
+                          (Date.)
+                          (byte-array buf-size))]
+    (closing-stream [tagged-out zipped-out])))
 
-(defn encrypt-file
-  "Takes a src file path, output target & public key. Writes encrypted
-  file to target stream."
-  [src dest ^PGPPublicKey pub-key]
-  (encrypt-bytes (file->zipped-bytes src) dest pub-key))
+(defn encrypted-stream
+  ^OutputStream
+  [^OutputStream out-stream ^PGPPublicKey pub-key buf-size]
+  (let [enc (doto (BcPGPDataEncryptorBuilder. PGPEncryptedData/AES_256)
+              (.setWithIntegrityPacket true)
+              (.setSecureRandom (SecureRandom.)))
+        gen (doto (PGPEncryptedDataGenerator. enc)
+              (.addMethod (BcPublicKeyKeyEncryptionMethodGenerator. pub-key)))]
+    (.open gen out-stream (byte-array buf-size))))
+
 
 (defn encrypt-stream
-  "Takes a src stream, output stream & public key. Writes encrypted
+  "Takes an input stream, output stream & public key. Writes encrypted
   file to output."
-  [src dest ^PGPPublicKey pub-key]
-  (encrypt-bytes (stream->zipped-bytes src (str (java.util.UUID/randomUUID)) 0x1000) dest pub-key))
+  [in out ^PGPPublicKey pub-key]
+  (let [buf-size 0x1000]
+    (with-open [e-out (encrypted-stream out pub-key buf-size)
+                z-out (zipped-stream e-out buf-size)]
+      (io/copy in z-out))))
+
+(defn encrypt-file
+  "Takes a in file path, output target path & public key. Writes encrypted
+  file to target stream."
+  [in out ^PGPPublicKey pub-key]
+  (with-open [in-stream (io/input-stream in)
+              out-stream (io/output-stream out)]
+    (encrypt-stream in-stream out-stream pub-key)))
 
 (defn decrypt-stream
   "Takes a src stream, output stream & public key. Writes decrypted
