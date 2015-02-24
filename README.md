@@ -9,7 +9,7 @@ A small collection of Clojure functions to provide basic GPG keypair generation,
 
 ## Usage
 
-Leiningen coordinates: `[thi.ng/crypto "0.1.0-SNAPSHOT"]`
+Leiningen coordinates: `[bilus/crypto "0.1.1-SNAPSHOT"]`
 
 ```clojure
 (require '[thi.ng.crypto.core :refer :all])
