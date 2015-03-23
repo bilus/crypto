@@ -1,4 +1,4 @@
-(defproject bilus/crypto "0.1.1-SNAPSHOT"
+(defproject bilus/crypto "0.1.1"
   :description  "Small Clojure lib to provide basic GPG keypair generation, encryption & decryption facilities"
   :url          "https://github.com/thi-ng/crypto"
   :license      {:name "Apache Software License 2.0"
